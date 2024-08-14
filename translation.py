@@ -257,7 +257,7 @@ if __name__ == '__main__':
     # 持续运行 nohup streamlit run translation.py --server.port 8504 >translation.log &
     # 监控输出 tail -f translation.log
     # 关闭 kill [$PID]
-    # 进程查看 ps -ef | grep ehs
+    # 进程查看 ps -ef | grep translation
     try:
         main()
     except Exception as e:
