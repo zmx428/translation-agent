@@ -34,7 +34,7 @@ def call_coze_api(query,con_id='123',user_id='zmx', stream=False):
             response.update(ref_info)
         return response
 
-def send_request(personal_access_token, con_id, bot_id, user_id, query, stream=False):
+def send_request(personal_access_token, con_id, bot_id, user_id, query, stream=False, resultkey="answer"):
     # 填充调用Coze API的具体代码，获得coze的回复，返回为json格式
     url = 'https://api.coze.cn/open_api/v2/chat'
     
@@ -79,7 +79,9 @@ def send_request(personal_access_token, con_id, bot_id, user_id, query, stream=F
                             # 如果"finish"标志为True，输出并清空累积内容
                             if chunk_data["is_finish"]:
                                 return_messages.append(accumulated_content)
-                                st.chat_message("assistant").write(accumulated_content)
+                                # 如果是Workflow的最后输出，，则不打印显示
+                                if accumulated_content[2:8] != resultkey:
+                                    st.chat_message("assistant").write(accumulated_content)
                                 accumulated_content = ""
             return return_messages
     else:
@@ -144,11 +146,12 @@ def plugin_text_process(ref_info):
 def get_bot_direct_reply(api_response):
     bot_answer = api_response.get('answer', "")
     bot_answer = json.loads(bot_answer)
+    initial = bot_answer.get('initial', "")
     reflection = bot_answer.get('reflection', "")
     intermediate = bot_answer.get('intermediate', "")
     classificationId = bot_answer.get('classificationId', "")
     answer = bot_answer.get('answer', "")
-    return answer, reflection, intermediate, classificationId
+    return answer, reflection, intermediate, classificationId, initial
 
 def clear_messages():
     st.session_state.messages = []
@@ -159,7 +162,7 @@ def testcall():
     time.sleep(1)
     return api_response
 
-def db_record(query, answer, reflection,intermediate, classificationId):
+def db_record(query, answer, reflection,intermediate, classificationId, initial):
     # 将query和answer记录到数据库
     # 连接到数据库，如果数据库不存在，则会创建一个新的数据库
     conn = sqlite3.connect(DB_NAME)
@@ -167,12 +170,12 @@ def db_record(query, answer, reflection,intermediate, classificationId):
     cursor = conn.cursor()
     # 创建表
     cursor.execute('''CREATE TABLE IF NOT EXISTS datatable
-                (date, query, answer, intermediate, reflection, classificationId)''')
+                (date, query, answer, intermediate, reflection, classificationId, initial)''')
     # 插入数据
     # 这里需要将传入的参数转换为元组(tuple)，然后传递给execute方法
-    cursor.execute("INSERT INTO datatable VALUES (?, ?, ?, ?, ?, ?)",
+    cursor.execute("INSERT INTO datatable VALUES (?, ?, ?, ?, ?, ?, ?)",
                    (datetime.datetime.now(), query, answer, intermediate, 
-                    reflection, classificationId))
+                    reflection, classificationId, initial))
     # 提交事务
     conn.commit()
     # 关闭连接
@@ -220,20 +223,29 @@ def main():
                 reflection = api_response.get('reflection', "")
                 intermediate = api_response.get('intermediate', "")
                 classificationId = api_response.get('classificationId', "")
+                initial = api_response.get('initial', "")
             else:
                 # 非流式显示
-                answer, reflection, intermediate, classificationId = get_bot_direct_reply(api_response)
+                answer, reflection, intermediate, classificationId, initial = get_bot_direct_reply(api_response)
+                # 初翻结果
+                if initial is None:
+                    initial = ""
+                initial = "初步翻译："+initial
+                st.session_state.messages.append({"role": "assistant", "content": initial})
+                st.chat_message("assistant").write(initial)
+                # 初次修改
+                if intermediate is None:
+                    intermediate = ""
+                intermediate = "反思初稿："+intermediate
+                st.session_state.messages.append({"role": "assistant", "content": intermediate})
+                st.chat_message("assistant").write(intermediate)
             # 完整结果的输出
             if classificationId is None:
                 classificationId = ""
-            classificationId = "写作类型："+ str(classificationId)
-            st.session_state.messages.append({"role": "assistant", "content": classificationId})
-            st.chat_message("assistant").write(classificationId)
-            if intermediate is None:
-                intermediate = ""
-            intermediate = "反思初稿："+intermediate
-            st.session_state.messages.append({"role": "assistant", "content": intermediate})
-            st.chat_message("assistant").write(intermediate)
+            #classificationId = "写作类型："+ str(classificationId)
+            #st.session_state.messages.append({"role": "assistant", "content": classificationId})
+            #st.chat_message("assistant").write(classificationId)
+            # 二次修改
             if answer is None:
                 answer = ""
             answer = "二次修改："+answer
@@ -249,7 +261,7 @@ def main():
             else:
                 reflection = ""
             # 调用函数，记录对话历史到数据库
-            db_record(prompt, answer, reflection,intermediate, classificationId)
+            db_record(prompt, answer, reflection,intermediate, classificationId, initial)
 
 
 if __name__ == '__main__':
